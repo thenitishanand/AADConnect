@@ -1,0 +1,89 @@
+Welcome to the AADConnect LAB wiki!
+To keep things simple I am jotting down all the 10 simple steps here.
+
+LAB Module 1: Leveraging the power of AAD Connect to synschronize AD to Azure AD. This Lab consists of 3 fundamental steps:
+1. We will start with creating an Azure Virtual Machine to mirror an on-prem Domain Controller. 
+2. Then we will create an Azure AD Tenant and
+3. At last we will leverage the power of AAD Connect to sync accounts from onprem AD to Azure AD.
+NOTE: For simplicity on this temporary LAB build please try to keep all the passwords same to avoid any confusions.
+
+STEP1: Create a VM to mirror onprem DC server
+Create RG for your Domain Controller:
+`az group create --name RG-ADLAB --location uksouth`
+
+Create a Network Security Group and a NSG rule to allow port 3389:
+`az network nsg create --name NSG-ADLAB --resource-group RG-ADLAB --location uksouth`
+
+`az network nsg rule create --name AllowRDP --nsg-name NSG-ADLAB --priority 100 --resource-group RG-ADLAB --access Allow --source-address-prefixes "*" --source-port-ranges "*" --direction Inbound --destination-port-ranges 3389`
+
+Create a VNET and a SUBNET:
+`az network vnet create --name VNet-ADLAB --resource-group RG-ADLAB --address-prefixes 10.10.0.0/16 --location uksouth`
+
+`az network vnet subnet create --address-prefix 10.10.10.0/24 --name Subnet-ADLAB --resource-group RG-ADLAB --vnet-name VNet-ADLAB --network-security-group NSG-ADLAB`
+
+Create the VM to mirror onprem DC Server:
+`az vm create --resource-group RG-ADLAB --name ONPREMDC --size Standard_DS1_v2 --image Win2019Datacenter --admin-username ADLABadmin --admin-password <ChoosePassword> --nsg NSG-ADLAB --private-ip-address 10.10.10.11`
+
+STEP2: Installation and Configuration of AD
+RDP to the ONPREMDC created under STEP1 above. 
+Now launch a powershell cmd and run following cmdletsL
+Install AD DS module: `Install-windowsfeature AD-Domain-Services -IncludeAllSubFeature -IncludeManagementTools`
+Import Deployment Modules: `Import-Module ADDSDeployment`
+Promote ONPREMDC server to a domain controller: `Install-ADDSForest -CreateDnsDelegation:$false -DatabasePath "C:\Windows\NTDS” -DomainMode “Win2012R2” -DomainName “onpremADdomain.TLD" -DomainNetbiosName “<onpremADdomain>" -ForestMode “Win2012R2” -InstallDns:$true -LogPath “C:\Windows\NTDS” -SysvolPath "C:\Windows\SYSVOL” -Force:$true`
+
+Enter and reconfirm your previously selected Password from STEP1 <ChoosePassword>. This will be use for Directory Services Restore Mode (DSRM). IGNORE the warnings. ONPREMDC VM will restart automatically at this point.
+
+STEP3: Configure the DNS for your ONPREMDC VM:
+The ONPREMDC VM (simulating an onprem Domain Controller) is pointing to Azure DNS (as a default). We will need to repoint it to the DNS of the Domain Controller.
+On Azure Portal > Click on ONPREMDC VM and make a note of its private IP (10.10.10.11).
+Now under the virtual network VNet-ADLAB > Settings > DNS Servers > Custom > mention the ONPREMDC VM's private IP which is 10.10.10.11 > Save. 
+
+STEP4: Create some Domain Accounts on your ONPREMDC VM: 
+RDP to ONPREMDC VM using your domain credentials created earlier such as ADLABadmin@onpremADdomain.tld and <Password>
+Open AD Users and Computers and create 2 new dummy users under Users section:
+onpremad.acct1
+onpremad.acct2
+Choose a password for both > Set password to never expire and untick User must change password at next logon.
+
+STEP5: Create a VM to host AAD Connect:
+From shell.azure.com > Create a new VM:
+`az vm create --resource-group RG-ADLAB --name ADConnect --size Standard_DS1_v2 --image Win2019Datacenter --admin-username ADConnectAdmin --admin-password <ChoosePassword> --nsg NSG-ADLAB --private-ip-address 10.10.10.15`
+
+STEP6: Install Azure AD
+From within Azure Portal > Create a resource > Identity > AAD > Create directory
+Org Name: azureADLab
+Domain Name: testazureADLab
+Create.
+
+STEP7: SYNC Account:
+This sync account is used by the AD Connect to sync things between onprem domain controller (ONPREMDC VM) and Azure AD (testazureADLab).
+Under AAD > Click +New User > Put AADSync as Username and Name > Click Let me create the password > <ChoosePassword>
+Under groups and roles click on User > Select Global Administrator > Select > United Kingdom as location > Click Create.
+Now test by opening portal.azure.com and login with AADSync@testazureADLab.onmicrosoft.com and Password.
+
+STEP8: Join ADConnect VM to Domain:
+RDP to ADConnect VM using ADConnectAdmin.
+Change the domain (under local server) by entering FQDN as onpremADdomain.tld > OK > Enter ADLABadmin and Password chosen earlier in STEP 1 > Restrat the VM.
+
+STEP9: Install AAD Connect:
+Now we need to install AD Connect tool on ADConnect VM. 
+RDP to ADConnect VM using onpremADdomain\ADLABadmin (do not use the local account ADConnectAdmin).
+Under Server Manager > turn off the IE Security Config for admins.
+Open IE > Browse to http://go.microsoft.com/fwlink/?LinkId=615771 > Download and run the tool.
+
+STEP10: Configure AAD Connect on the ADConnect VM:
+Double click and open the AD Connect tool from desktop > Select I agree > Continue > Use Express Settings.
+On the Connect to Azure AD screen, enter your Azure AD Details:
+AADSync@testazureADLab.onmicrosoft.com and Password from STEP7. > Next > Confirm.
+On the Connect to AD DS Screen, enter the AD DS domain admin details:
+onpremADdomain\ADLABadmin from STEP2.
+On the Azure AD Sign-in config screen, tick Continue without any verified domain (as this is a temp lab setup) > Next.
+On the Ready to Configure screen, click Install > Once completed click Exit and Exit RDP session.
+
+STEP11: Final Verification :)
+Go to Azure Portal and check your AAD under your testazureADLab.onmicrosoft.com directory > Click on Manage > Users > Here you should now have the 2 dummy accounts we created earlier in STEP4:
+onpremad.acct1
+onpremad.acct2
+Also note they appear as Windows Server AD. This proves that these are the sync'd accounts from onprem AD to Azure AD.
+
+Now relax and take a cuppa! You have completed a full LAB of sync'ing onprem accounts to Azure AD.
